@@ -3,14 +3,18 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { OllamaConfig, Message } from '../types';
 import { chatWithOllama } from '../lib/ollama';
+import { db, LocalPDF } from '../lib/db';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { Trash2 } from 'lucide-react';
 
 interface AIAssistantProps {
   documentText: string;
   highlightedText: string;
   config: OllamaConfig;
+  dbPdf?: LocalPDF | null;
 }
 
-export function AIAssistant({ documentText, highlightedText, config }: AIAssistantProps) {
+export function AIAssistant({ documentText, highlightedText, config, dbPdf }: AIAssistantProps) {
   const [activeTab, setActiveTab] = useState<'chat' | 'explain' | 'summary'>('chat');
   
   // Chat state
@@ -25,6 +29,20 @@ export function AIAssistant({ documentText, highlightedText, config }: AIAssista
   
   const [isProcessing, setIsProcessing] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Load chats and summary when active PDF changes
+  useEffect(() => {
+    if (dbPdf?.id) {
+      setSummary(dbPdf.summary || '');
+      db.messages.where('pdfId').equals(dbPdf.id).sortBy('timestamp').then(msgs => {
+        setChatMessages(msgs.map(m => ({ role: m.role, content: m.content })));
+      });
+    } else {
+      setChatMessages([]);
+      setSummary('');
+    }
+    setExplanation('');
+  }, [dbPdf?.id]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -52,11 +70,24 @@ export function AIAssistant({ documentText, highlightedText, config }: AIAssista
     ];
     
     setChatMessages(newMessages);
+    
+    // Save user message to DB immediately
+    if (dbPdf?.id) {
+      await db.messages.add({
+        pdfId: dbPdf.id,
+        role: 'user',
+        content: userMessage,
+        timestamp: Date.now()
+      });
+    }
+
     setIsProcessing(true);
     
     // Add assistant placeholder
     setChatMessages(prev => [...prev, { role: 'assistant', content: '' }]);
     
+    let finalAssistantMessage = '';
+
     try {
       let systemPrompt = `You are a helpful AI assistant. Use the following document context to answer questions: \n\n---\n${documentText}\n---\nIf the answer is not in the context, say so.`;
       
@@ -70,12 +101,24 @@ export function AIAssistant({ documentText, highlightedText, config }: AIAssista
       ];
 
       await chatWithOllama(config, messagesWithContext, (chunk) => {
+        finalAssistantMessage = chunk;
         setChatMessages(prev => {
           const updated = [...prev];
           updated[updated.length - 1].content = chunk;
           return updated;
         });
       });
+      
+      // Save full assistant message when stream is finish
+      if (dbPdf?.id && finalAssistantMessage) {
+        await db.messages.add({
+          pdfId: dbPdf.id,
+          role: 'assistant',
+          content: finalAssistantMessage,
+          timestamp: Date.now()
+        });
+      }
+
     } catch (err) {
       console.error(err);
       setChatMessages(prev => {
@@ -115,11 +158,15 @@ export function AIAssistant({ documentText, highlightedText, config }: AIAssista
   };
 
   const handleSummarize = async () => {
+    // If we already have a loaded summary and we are not forcing it, skip.
+    // Assuming button allows re-generation if user clicks when summary is there?
+    // The previous implementation generated summary if documentText & !summary.
     if (!documentText || isProcessing) return;
     
     setIsProcessing(true);
     setSummary('');
-    
+    let finalSummary = '';
+
     try {
       const messages: Message[] = [
         { role: 'system', content: 'You are an expert summarizer. Provide a concise but comprehensive summary of the provided entire document.' },
@@ -128,8 +175,15 @@ export function AIAssistant({ documentText, highlightedText, config }: AIAssista
       // Note: cutting off document at 10000 chars roughly to avoid exceeding context window for simple local models.
 
       await chatWithOllama(config, messages, (chunk) => {
+        finalSummary = chunk;
         setSummary(chunk);
       });
+      
+      // Save summary to db
+      if (dbPdf?.id) {
+        await db.pdfs.update(dbPdf.id, { summary: finalSummary });
+      }
+
     } catch (err) {
       setSummary('Error generating summary. Is Ollama running?');
     } finally {
@@ -139,27 +193,25 @@ export function AIAssistant({ documentText, highlightedText, config }: AIAssista
 
   return (
     <div className="flex flex-col h-full bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 flex-1 min-w-0 transition-colors">
-      <div className="flex border-b dark:border-gray-700 text-sm font-medium">
+      <div className="flex border-b dark:border-gray-700 text-xs font-medium overflow-x-auto custom-scrollbar">
         <button
           onClick={() => setActiveTab('chat')}
-          className={`flex-1 py-3 text-center transition-colors ${activeTab === 'chat' ? 'border-b-2 border-blue-600 text-blue-600 dark:border-blue-500 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50'}`}
+          className={`px-4 py-3 text-center whitespace-nowrap transition-colors ${activeTab === 'chat' ? 'border-b-2 border-blue-600 text-blue-600 dark:border-blue-500 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50'}`}
         >
           Q&A
         </button>
         <button
-          onClick={() => {
-            setActiveTab('explain');
-          }}
-          className={`flex-1 py-3 text-center transition-colors ${activeTab === 'explain' ? 'border-b-2 border-blue-600 text-blue-600 dark:border-blue-500 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50'}`}
+          onClick={() => { setActiveTab('explain'); }}
+          className={`px-4 py-3 text-center whitespace-nowrap transition-colors ${activeTab === 'explain' ? 'border-b-2 border-blue-600 text-blue-600 dark:border-blue-500 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50'}`}
         >
-          Explain Highlight
+          Explain
         </button>
         <button
           onClick={() => {
             setActiveTab('summary');
             if (documentText && !summary && !isProcessing) handleSummarize();
           }}
-          className={`flex-1 py-3 text-center transition-colors ${activeTab === 'summary' ? 'border-b-2 border-blue-600 text-blue-600 dark:border-blue-500 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50'}`}
+          className={`px-4 py-3 text-center whitespace-nowrap transition-colors ${activeTab === 'summary' ? 'border-b-2 border-blue-600 text-blue-600 dark:border-blue-500 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50'}`}
         >
           Summary
         </button>
@@ -193,7 +245,7 @@ export function AIAssistant({ documentText, highlightedText, config }: AIAssista
               {highlightedText && (
                 <div className="bg-blue-50/80 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 border-b-0 rounded-t-xl px-3 py-2 text-xs text-blue-800 dark:text-blue-300 flex items-center z-10 transition-all">
                   <span className="font-semibold mr-2 shrink-0">Selected text:</span>
-                  <span className="truncate italic opacity-80">"{highlightedText}"</span>
+                  <span className="truncate italic opacity-80 mr-2 border-blue-200 dark:border-blue-700 pr-2">"{highlightedText}"</span>
                 </div>
               )}
               <div className="relative">
