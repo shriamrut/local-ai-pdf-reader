@@ -1,0 +1,6 @@
+{
+  "name": "Local PDF AI Reader",
+  "description": "A local first browser-based PDF reader that connects to your local Ollama instance for Q&A, Summarization, and Highlight explanations.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
