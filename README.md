@@ -47,3 +47,7 @@ OLLAMA_ORIGINS="*" ollama serve
 In the top right corner of the application window, click the Settings (gear) icon to:
 - Change the Ollama API URL if you are hosting it on another device within your network.
 - Switch the active AI Model (e.g., `llama3`, `mistral`, `phi3`). Ensure you have downloaded the model in Ollama via `ollama pull <model-name>` prior to selecting it.
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
