@@ -50,7 +50,7 @@ export default function App() {
           <div className="bg-blue-600 p-2 rounded-lg text-white">
             <FileText size={20} />
           </div>
-          <h1 className="text-xl font-semibold tracking-tight">Ollama PDF Reader</h1>
+          <h1 className="text-xl font-semibold tracking-tight">Local AI PDF Reader (LAIPR)</h1>
         </div>
         
         <div className="flex items-center gap-4">

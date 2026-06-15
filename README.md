@@ -1,4 +1,6 @@
-# Local PDF AI Reader
+# Local AI PDF Reader (LAIPR)
+
+![App Screenshot](./screenshot.png)
 
 A privacy-first, browser-based PDF reader that connects directly to your local [Ollama](https://ollama.com/) instance to supercharge your reading experience. No data leaves your machine!
 
